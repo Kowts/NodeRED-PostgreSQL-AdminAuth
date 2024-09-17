@@ -1,4 +1,4 @@
-const { Client } = require("pg");
+const { Pool } = require("pg");  // Use Pool instead of Client
 const crypto = require("crypto");
 const config = require('./config');
 
@@ -8,14 +8,16 @@ if (!config.encryption.secret || !config.encryption.iv) {
     process.exit(1);
 }
 
-// Initialize PostgreSQL client with configuration values
-const globalClient = new Client({
+// Initialize PostgreSQL connection pool with configuration values
+const pool = new Pool({
     host: config.db.host,
     user: config.db.user,
     password: config.db.password,
     database: config.db.database,
+    max: 10,  // Set the maximum number of clients in the pool
+    idleTimeoutMillis: 30000,  // Close idle clients after 30 seconds
+    connectionTimeoutMillis: 2000,  // Return an error after 2 seconds if connection can't be established
 });
-globalClient.connect();
 
 // Convert secret and IV from hex format to Buffer objects
 const key = Buffer.from(config.encryption.secret, "hex");
@@ -47,7 +49,8 @@ module.exports = {
      */
     users: async function (username) {
         try {
-            const res = await globalClient.query(
+            // Use a connection from the pool
+            const res = await pool.query(
                 `SELECT username, permissions FROM nodered_users WHERE username=$1`,
                 [username]
             );
@@ -59,7 +62,7 @@ module.exports = {
                 return null;
             }
         } catch (error) {
-            console.error("Error fetching user details", error.stack);
+            console.error("Error fetching user details:", error.stack);
             return null; // Return null if an error occurs
         }
     },
@@ -70,54 +73,52 @@ module.exports = {
      * @param {string} password - The password to check.
      * @returns {Promise<object|null>} - Returns a user object with username and permissions if authentication is successful, or null otherwise.
      */
-    authenticate: function (username, password) {
-        return new Promise(async function (resolve) {
-            try {
-                // Encrypt the provided password
-                const encryptedData = encrypt(password, key, ivBuffer);
+    authenticate: async function (username, password) {
+        try {
+            // Encrypt the provided password
+            const encryptedData = encrypt(password, key, ivBuffer);
 
-                // Query to check if the user exists
-                let res = await globalClient.query(
-                    `SELECT * FROM nodered_users WHERE username=$1`,
-                    [username]
-                );
+            // Query to check if the user exists
+            let res = await pool.query(
+                `SELECT * FROM nodered_users WHERE username=$1`,
+                [username]
+            );
 
-                if (res.rows.length > 0) {
-                    const user = res.rows[0];
+            if (res.rows.length > 0) {
+                const user = res.rows[0];
 
-                    if (!user.password) {
-                        // If the user exists but doesn't have a password, set the password
-                        await globalClient.query(
-                            `UPDATE nodered_users SET password=$1 WHERE username=$2`,
-                            [encryptedData, username]
-                        );
+                if (!user.password) {
+                    // If the user exists but doesn't have a password, set the password
+                    await pool.query(
+                        `UPDATE nodered_users SET password=$1 WHERE username=$2`,
+                        [encryptedData, username]
+                    );
 
-                        // Fetch the user with the updated password
-                        res = await globalClient.query(
-                            `SELECT * FROM nodered_users WHERE username=$1`,
-                            [username]
-                        );
-                        if (res.rows.length > 0) {
-                            const updatedUser = res.rows[0];
-                            const userWithPermissions = { username: updatedUser.username, permissions: updatedUser.permissions };
-                            resolve(userWithPermissions);
-                        } else {
-                            resolve(null);
-                        }
-                    } else if (user.password === encryptedData) {
-                        // If the password matches, return the user with permissions
-                        const userWithPermissions = { username: user.username, permissions: user.permissions };
-                        resolve(userWithPermissions);
+                    // Fetch the user with the updated password
+                    res = await pool.query(
+                        `SELECT * FROM nodered_users WHERE username=$1`,
+                        [username]
+                    );
+                    if (res.rows.length > 0) {
+                        const updatedUser = res.rows[0];
+                        const userWithPermissions = { username: updatedUser.username, permissions: updatedUser.permissions };
+                        return userWithPermissions;
                     } else {
-                        resolve(null); // Password does not match
+                        return null;
                     }
+                } else if (user.password === encryptedData) {
+                    // If the password matches, return the user with permissions
+                    const userWithPermissions = { username: user.username, permissions: user.permissions };
+                    return userWithPermissions;
                 } else {
-                    resolve(null); // User does not exist
+                    return null; // Password does not match
                 }
-            } catch (error) {
-                console.error("Error executing query", error.stack);
-                resolve(null); // Resolve with null in case of an error
+            } else {
+                return null; // User does not exist
             }
-        });
+        } catch (error) {
+            console.error("Error executing query:", error.stack);
+            return null; // Return null in case of an error
+        }
     },
 };
