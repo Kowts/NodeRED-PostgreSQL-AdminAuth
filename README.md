@@ -49,3 +49,4 @@ This repository contains a custom admin authentication implementation for [Node-
        },
    };
    module.exports = config;
+    ```
