@@ -77,5 +77,20 @@ node-red
 - Add users to the nodered_users table in PostgreSQL.
 - The permissions field determines access level ("read" or "readwrite").
 
+### Generating Secret Key and Initialization Vector (IV)
+- To generate these values, execute the code below:
+```javascript
+const crypto = require("crypto");
+
+// Generate a 32-byte secret key (256 bits)
+const secret = crypto.randomBytes(32).toString("hex");
+
+// Generate a 16-byte initialization vector (128 bits)
+const iv = crypto.randomBytes(16).toString("hex");
+
+console.log("Secret Key:", secret);
+console.log("IV:", iv);
+```
+
 ## License
 This project is licensed under the MIT License.
