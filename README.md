@@ -17,13 +17,11 @@ This repository contains a custom user authentication implementation for [Node-R
    git clone https://github.com/Kowts/NodeRED-PostgreSQL-AdminAuth.git
    cd NodeRED-PostgreSQL-AdminAuth
    ```
-
 2. Install required Node.js modules:
 
    ```bash
-   npm install pg crypto
+   npm install pg bcrypt
    ```
-
 3. Configure the PostgreSQL database:
 
    - Create a PostgreSQL database and a table `nodered_users` with the following schema:
@@ -39,7 +37,6 @@ This repository contains a custom user authentication implementation for [Node-R
        status INT DEFAULT 1 NOT NULL
    );
    ```
-
 4. Update `config.js` with your PostgreSQL connection details and encryption settings:
 
    ```javascript
@@ -57,17 +54,16 @@ This repository contains a custom user authentication implementation for [Node-R
    module.exports = config;
    ```
 
-    - To generate a secure salt string, you can use Node.js's built-in `crypto` module:
+   - To generate a secure salt string, you can use Node.js's built-in `crypto` module:
 
-    ```javascript
-    const crypto = require('crypto');
+   ```javascript
+   const crypto = require('crypto');
 
-    // Generate a secure random salt (16 bytes, or 128 bits, is a good size)
-    const salt = crypto.randomBytes(16).toString('hex');
+   // Generate a secure random salt (16 bytes, or 128 bits, is a good size)
+   const salt = crypto.randomBytes(16).toString('hex');
 
-    console.log(`Generated salt: ${salt}`);
-    ```
-
+   console.log(`Generated salt: ${salt}`);
+   ```
 5. Modify your Node-RED settings file (~/.node-red/settings.js):
 
    - Require the custom authentication module:
@@ -84,7 +80,6 @@ This repository contains a custom user authentication implementation for [Node-R
        adminAuth: customAuth
    };
    ```
-
 6. Start Node-RED:
 
    ```bash
