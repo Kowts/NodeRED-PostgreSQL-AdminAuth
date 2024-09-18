@@ -5,9 +5,8 @@ const config = {
         password: '{PASSOWRD}',
         database: '{DB}',
     },
-    encryption: {
-        secret: '{SECRET}',
-        iv: '{IV}',
+    security: {
+        salt: '{STATIC_SALT}',  // Add your static salt here, e.g., 'a_random_generated_salt'
     },
 };
 

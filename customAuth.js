@@ -5,6 +5,9 @@ const config = require('./config');
 // Number of rounds to generate salt for hashing
 const SALT_ROUNDS = 10;
 
+// Static salt from config
+const STATIC_SALT = config.security.salt || 'default_salt_value';  // Ensure static salt exists
+
 // Check if PostgreSQL configuration is set
 if (!config.db.host || !config.db.user || !config.db.password || !config.db.database) {
     console.error("Error: Database configuration values are not set.");
@@ -23,14 +26,16 @@ const pool = new Pool({
 });
 
 /**
- * Hashes a plain text string using bcrypt.
+ * Hashes a plain text password using bcrypt with a static salt.
  * @param {string} plainString - The plain text password to hash.
  * @returns {Promise<string>} - The hashed password.
  */
 async function hashPassword(plainString) {
     try {
-        const salt = await bcrypt.genSalt(SALT_ROUNDS);
-        return await bcrypt.hash(plainString, salt);
+        // Concatenate the static salt with the plain text password
+        const saltedPassword = plainString + STATIC_SALT;
+        const salt = await bcrypt.genSalt(SALT_ROUNDS);  // Generate bcrypt salt
+        return await bcrypt.hash(saltedPassword, salt);  // Hash the salted password
     } catch (error) {
         console.error("Error hashing password:", error.stack);
         throw error;
@@ -38,14 +43,16 @@ async function hashPassword(plainString) {
 }
 
 /**
- * Compares a plain text string with a hashed password.
+ * Compares a plain text password with a hashed password using bcrypt and static salt.
  * @param {string} plainString - The plain text password.
  * @param {string} hash - The hashed password from the database.
  * @returns {Promise<boolean>} - True if the password matches, false otherwise.
  */
 async function comparePassword(plainString, hash) {
     try {
-        return await bcrypt.compare(plainString, hash);
+        // Concatenate the static salt with the plain text password before comparison
+        const saltedPassword = plainString + STATIC_SALT;
+        return await bcrypt.compare(saltedPassword, hash);
     } catch (error) {
         console.error("Error comparing password:", error.stack);
         throw error;
@@ -124,7 +131,7 @@ module.exports = {
                         return null;
                     }
                 } else {
-                    // If the user has a password, compare the hashed password
+                    // If the user has a password, compare the salted password with the hash
                     const isPasswordValid = await comparePassword(password, user.password);
                     if (isPasswordValid) {
                         return { username: user.username, permissions: user.permissions };
