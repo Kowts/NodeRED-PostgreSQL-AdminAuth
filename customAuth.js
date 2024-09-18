@@ -1,10 +1,13 @@
-const { Pool } = require("pg");  // Use Pool instead of Client
-const crypto = require("crypto");
+const { Pool } = require("pg");  // PostgreSQL connection pool
+const bcrypt = require("bcrypt");
 const config = require('./config');
 
-// Check if configuration values for encryption are set correctly
-if (!config.encryption.secret || !config.encryption.iv) {
-    console.error("Error: SECRET or IV configuration values are not set.");
+// Number of rounds to generate salt for hashing
+const SALT_ROUNDS = 10;
+
+// Check if PostgreSQL configuration is set
+if (!config.db.host || !config.db.user || !config.db.password || !config.db.database) {
+    console.error("Error: Database configuration values are not set.");
     process.exit(1);
 }
 
@@ -19,24 +22,44 @@ const pool = new Pool({
     connectionTimeoutMillis: 2000,  // Return an error after 2 seconds if connection can't be established
 });
 
-// Convert secret and IV from hex format to Buffer objects
-const key = Buffer.from(config.encryption.secret, "hex");
-const ivBuffer = Buffer.from(config.encryption.iv, "hex");
+/**
+ * Hashes a plain text string using bcrypt.
+ * @param {string} plainString - The plain text password to hash.
+ * @returns {Promise<string>} - The hashed password.
+ */
+async function hashPassword(plainString) {
+    try {
+        const salt = await bcrypt.genSalt(SALT_ROUNDS);
+        return await bcrypt.hash(plainString, salt);
+    } catch (error) {
+        console.error("Error hashing password:", error.stack);
+        throw error;
+    }
+}
 
 /**
- * Encrypts a plain text string using AES-256-CBC encryption.
- * @param {string} plainString - The plain text string to encrypt.
- * @param {Buffer} AesKey - The encryption key.
- * @param {Buffer} AesIV - The initialization vector.
- * @returns {string} - The encrypted string in base64 format.
+ * Compares a plain text string with a hashed password.
+ * @param {string} plainString - The plain text password.
+ * @param {string} hash - The hashed password from the database.
+ * @returns {Promise<boolean>} - True if the password matches, false otherwise.
  */
-function encrypt(plainString, AesKey, AesIV) {
-    const cipher = crypto.createCipheriv("aes-256-cbc", AesKey, AesIV);
-    let encrypted = Buffer.concat([
-        cipher.update(Buffer.from(plainString, "utf8")),
-        cipher.final(),
-    ]);
-    return encrypted.toString("base64");
+async function comparePassword(plainString, hash) {
+    try {
+        return await bcrypt.compare(plainString, hash);
+    } catch (error) {
+        console.error("Error comparing password:", error.stack);
+        throw error;
+    }
+}
+
+/**
+ * Logs errors to a log file or external service.
+ * @param {Error} error - The error object.
+ * @param {string} message - Additional error message context.
+ */
+function logError(error, message) {
+    // Extend this function to log to a file, an external service, or monitoring system
+    console.error(`${message}:`, error.stack);
 }
 
 module.exports = {
@@ -49,7 +72,7 @@ module.exports = {
      */
     users: async function (username) {
         try {
-            // Use a connection from the pool
+            // Use a connection from the pool to query the database
             const res = await pool.query(
                 `SELECT username, permissions FROM nodered_users WHERE username=$1`,
                 [username]
@@ -62,23 +85,20 @@ module.exports = {
                 return null;
             }
         } catch (error) {
-            console.error("Error fetching user details:", error.stack);
-            return null; // Return null if an error occurs
+            logError(error, "Error fetching user details");
+            return null;  // Return null if an error occurs
         }
     },
 
     /**
      * Authenticates a user by checking the provided password.
      * @param {string} username - The username to authenticate.
-     * @param {string} password - The password to check.
+     * @param {string} password - The plain-text password to check.
      * @returns {Promise<object|null>} - Returns a user object with username and permissions if authentication is successful, or null otherwise.
      */
     authenticate: async function (username, password) {
         try {
-            // Encrypt the provided password
-            const encryptedData = encrypt(password, key, ivBuffer);
-
-            // Query to check if the user exists
+            // Query the database to check if the user exists
             let res = await pool.query(
                 `SELECT * FROM nodered_users WHERE username=$1`,
                 [username]
@@ -88,37 +108,36 @@ module.exports = {
                 const user = res.rows[0];
 
                 if (!user.password) {
-                    // If the user exists but doesn't have a password, set the password
+                    // If the user exists but doesn't have a password, hash and set the password
+                    const hashedPassword = await hashPassword(password);
                     await pool.query(
                         `UPDATE nodered_users SET password=$1 WHERE username=$2`,
-                        [encryptedData, username]
+                        [hashedPassword, username]
                     );
 
                     // Fetch the user with the updated password
-                    res = await pool.query(
-                        `SELECT * FROM nodered_users WHERE username=$1`,
-                        [username]
-                    );
+                    res = await pool.query(`SELECT * FROM nodered_users WHERE username=$1`, [username]);
                     if (res.rows.length > 0) {
                         const updatedUser = res.rows[0];
-                        const userWithPermissions = { username: updatedUser.username, permissions: updatedUser.permissions };
-                        return userWithPermissions;
+                        return { username: updatedUser.username, permissions: updatedUser.permissions };
                     } else {
                         return null;
                     }
-                } else if (user.password === encryptedData) {
-                    // If the password matches, return the user with permissions
-                    const userWithPermissions = { username: user.username, permissions: user.permissions };
-                    return userWithPermissions;
                 } else {
-                    return null; // Password does not match
+                    // If the user has a password, compare the hashed password
+                    const isPasswordValid = await comparePassword(password, user.password);
+                    if (isPasswordValid) {
+                        return { username: user.username, permissions: user.permissions };
+                    } else {
+                        return null;  // Password does not match
+                    }
                 }
             } else {
-                return null; // User does not exist
+                return null;  // User does not exist
             }
         } catch (error) {
-            console.error("Error executing query:", error.stack);
-            return null; // Return null in case of an error
+            logError(error, "Error during authentication");
+            return null;  // Return null in case of an error
         }
     },
 };
